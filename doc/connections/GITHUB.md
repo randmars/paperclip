@@ -29,11 +29,14 @@ and webhook binding uses the same order:
 2. The active personal GitHub grant owned by the run's `responsibleUserId`.
 3. For automated work without a responsible user, a personal grant only when
    an existing standing delegation names the agent.
-4. Legacy `GH_TOKEN`/`GITHUB_TOKEN` only when no managed GitHub connection is
+4. An explicitly installed company-shared PAT (`mcp-key`) with one default
+   organization grant, only when no personal, dedicated, or delegated identity
+   matches. Multiple organization grants fail closed.
+5. Legacy `GH_TOKEN`/`GITHUB_TOKEN` only when no managed GitHub connection is
    configured for the company.
 
 An unavailable or ambiguous managed identity fails visibly. It never falls
-through to another person, an organization credential, or a legacy token.
+through to another person, a shared PAT, or a legacy token.
 Agent grants are company-scoped, have exactly one `subjectAgentId`, cannot be
 organization defaults, and are installed only for that agent.
 
@@ -47,6 +50,15 @@ non-viewer company member at each use. A standing delegation is needed only
 when a run genuinely has no responsible user.
 
 ## Credential lifecycle
+
+The advanced company-shared PAT uses its existing encrypted
+`credentials.authorization` reference. Runtime validates the token with GitHub's
+`/user` endpoint and uses the returned identity for Git; it does not require or
+invent GitHub App installation metadata. GitHub enforces the PAT's repository
+permissions and expiry. Revoked, missing, or invalid credentials fail closed.
+The connection must be installed for the company or the executing agent in
+addition to having an access profile. MCP write-approval policies remain in
+effect; raw Git/gh credentials remain unavailable to low-trust executions.
 
 The production, staging, and development GitHub Apps deliberately disable
 user-to-server token expiration. The resulting long-lived access token is

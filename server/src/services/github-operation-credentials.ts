@@ -20,7 +20,7 @@ import { isLowTrustQuarantined } from "./source-trust.js";
 
 export type GitHubCredentialSummary = {
   status: "available" | "absent" | "unavailable";
-  source?: "personal" | "dedicated";
+  source?: "personal" | "dedicated" | "organization";
   login?: string;
   reason?: string;
   connectionId?: string;
@@ -103,7 +103,7 @@ async function allowsGitHubCredentialExport(
   );
 }
 
-/** No company secrets or ambient credentials are consulted by this path. */
+/** Only the selected connection's secret is consulted; no ambient credential fallback. */
 export async function resolveGitHubOperationCredentials(
   db: Db,
   input: {
