@@ -254,6 +254,7 @@ import {
 import { SourceTrustBadge } from "./SourceTrustBadge";
 import { CommentAttributionChip } from "./CommentAttributionChip";
 import { resolveCommentAttribution } from "../lib/comment-attribution";
+import { randomUuid } from "@/lib/random-uuid";
 
 interface IssueChatMessageContext {
   feedbackDataSharingPreference: FeedbackDataSharingPreference;
@@ -4697,6 +4698,7 @@ const IssueChatComposer = forwardRef<
   forwardedRef,
 ) {
   const stopControl = useComposerStop(onStop, stopPending);
+  const toastActions = useOptionalToastActions();
   // Initialize before StrictMode's mount cleanup can flush an empty value over
   // the stored draft. The effect below handles subsequent task-key changes.
   const [body, setBody] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
@@ -5022,7 +5024,7 @@ const IssueChatComposer = forwardRef<
         setBody(trimmed);
         return;
       }
-      attemptId = crypto.randomUUID();
+      attemptId = randomUuid();
       if (draftKey) {
         saveDraft(draftKey, trimmed);
         saveDraftSubmission(draftKey, { attemptId, reviewed: false });
@@ -5060,6 +5062,18 @@ const IssueChatComposer = forwardRef<
           saveDraftSubmission(draftKey, uncertain);
       } else if (draftKey && attemptId)
         clearDraftSubmission(draftKey, attemptId);
+      if (!(error instanceof CommentSubmissionUnknownError)) {
+        // Restoring the draft silently made a failed send indistinguishable from
+        // a click that did nothing at all.
+        toastActions?.pushToast({
+          title: "Message not sent",
+          body:
+            error instanceof Error && error.message
+              ? error.message + " Your message was kept in the composer."
+              : "The message could not be sent. Your message was kept in the composer.",
+          tone: "error",
+        });
+      }
       const restoredBody = nextDraft ? `${trimmed}\n\n${nextDraft}` : trimmed;
       if (draftKey) saveDraft(draftKey, restoredBody, attemptId ?? undefined);
       setBody(restoredBody);

@@ -24,6 +24,7 @@ import {
   type ComposerDraftSubmission,
 } from "@/lib/composer-draft";
 import { CommentSubmissionUnknownError } from "@/lib/comment-submit-result";
+import { useOptionalToastActions } from "@/context/ToastContext";
 import {
   ArrowUp,
   Square,
@@ -74,6 +75,7 @@ import type { ActionCommandOption } from "@/context/EditorAutocompleteContext";
 import { TaskChatComposerTakeoverActionsContext } from "./TaskChatComposerTakeoverContext";
 
 import { TaskChatPausedTakeover, type TaskComposerPause } from "./TaskChatPausedTakeover";
+import { randomUuid } from "@/lib/random-uuid";
 
 /** Structurally identical to IssueChatThread's module-private CommentReassignment. */
 export interface CommentReassignment {
@@ -417,6 +419,7 @@ export function TaskChatComposer({
 }: TaskChatComposerProps) {
   const streamlined = useStreamlinedTaskChatPresentation();
   const stopControl = useComposerStop(onStop, stopPending);
+  const toastActions = useOptionalToastActions();
   const [body, setBody] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
   const [submitting, setSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState(false);
@@ -664,7 +667,7 @@ export function TaskChatComposer({
 
   /** Upload an image and return its URL for inline `![](src)` markdown. */
   async function uploadInlineImage(file: File): Promise<string> {
-    const id = crypto.randomUUID();
+    const id = randomUuid();
     setAttachments((prev) => [
       ...prev,
       {
@@ -981,7 +984,7 @@ export function TaskChatComposer({
         setBody(submittedBody);
         return;
       }
-      attemptId = crypto.randomUUID();
+      attemptId = randomUuid();
       if (draftKey) {
         saveDraft(draftKey, submittedBody);
         saveDraftSubmission(draftKey, { attemptId, reviewed: false });
@@ -1033,6 +1036,18 @@ export function TaskChatComposer({
           saveDraftSubmission(draftKey, uncertain);
       } else if (draftKey && attemptId)
         clearDraftSubmission(draftKey, attemptId);
+      if (!(error instanceof CommentSubmissionUnknownError)) {
+        // Restoring the draft silently made a failed send indistinguishable from
+        // a click that did nothing at all.
+        toastActions?.pushToast({
+          title: "Message not sent",
+          body:
+            error instanceof Error && error.message
+              ? error.message + " Your message was kept in the composer."
+              : "The message could not be sent. Your message was kept in the composer.",
+          tone: "error",
+        });
+      }
       // Restore the failed message for retry without discarding a next draft
       // that was entered while the request was pending.
       const restoredBody = nextDraft

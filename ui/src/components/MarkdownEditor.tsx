@@ -1299,6 +1299,43 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
       )
     : null;
 
+  const handleEditorChange = useCallback((rawNext: string) => {
+    if (readOnly) return;
+    // Reverse the editor-only rewrites: blockquotes the exporter escaped
+    // as `\\>` (so a `>`-prefixed line the user typed survives even when
+    // the WYSIWYG shortcut didn't fire), and the `\\<` transport escaping
+    // that keeps bare angle brackets off the HTML parser.
+    const next = toStoredMarkdown(rawNext);
+    const echo = echoIgnoreMarkdownRef.current;
+    if (echo !== null) {
+      echoIgnoreMarkdownRef.current = null;
+      // `echo` is what we handed to `setMarkdown`, so it is in editor
+      // space while `next` is in stored space. Accept either form —
+      // otherwise every prop sync of a value containing an escaped
+      // bracket reads as a real edit and notifies the parent.
+      if (next === echo || next === toStoredMarkdown(echo)) {
+        latestValueRef.current = echo;
+        return;
+      }
+    }
+
+    if (initialChildOnChangeRef.current) {
+      initialChildOnChangeRef.current = false;
+      if (next === "" && editorValue !== "") {
+        echoIgnoreMarkdownRef.current = editorValue;
+        ref.current?.setMarkdown(editorValue);
+        return;
+      }
+    }
+    const nextEditorValue = prepareMarkdownForEditor(next);
+    // Some embedded browsers emit both MDXEditor's callback and a native
+    // input event. The latter is our reliability fallback; suppress its
+    // duplicate once the controlled value has already advanced.
+    if (nextEditorValue === latestValueRef.current) return;
+    latestValueRef.current = nextEditorValue;
+    onChange(next);
+  }, [editorValue, onChange, readOnly]);
+
   if (richEditorError) {
     return (
       <div
@@ -1365,6 +1402,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
         isDragOver && "ring-1 ring-primary/60 bg-accent/20",
         className,
       )}
+      onInput={() => {
+        // MDXEditor 4 can update its Lexical document without firing its
+        // React `onChange` callback in embedded WebViews. Read its public
+        // value after the native input bubbles so the task composer still
+        // receives typed text and enables Send.
+        queueMicrotask(() => {
+          const getMarkdown = ref.current?.getMarkdown;
+          if (getMarkdown) handleEditorChange(getMarkdown());
+        });
+      }}
       onKeyDownCapture={(e) => {
         if (readOnly) return;
         // Cmd/Ctrl+Enter to submit
@@ -1474,41 +1521,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
           suppressHtmlProcessing
           placeholder={placeholder}
           readOnly={readOnly}
-          onChange={(rawNext) => {
-            if (readOnly) return;
-            // Reverse the editor-only rewrites: blockquotes the exporter escaped
-            // as `\>` (so a `>`-prefixed line the user typed survives even when
-            // the WYSIWYG shortcut didn't fire), and the `\<` transport escaping
-            // that keeps bare angle brackets off the HTML parser.
-            const next = toStoredMarkdown(rawNext);
-            const echo = echoIgnoreMarkdownRef.current;
-            if (echo !== null) {
-              echoIgnoreMarkdownRef.current = null;
-              // `echo` is what we handed to `setMarkdown`, so it is in editor
-              // space while `next` is in stored space. Accept either form —
-              // otherwise every prop sync of a value containing an escaped
-              // bracket reads as a real edit and notifies the parent.
-              if (next === echo || next === toStoredMarkdown(echo)) {
-                latestValueRef.current = echo;
-                return;
-              }
-            }
-
-            if (initialChildOnChangeRef.current) {
-              initialChildOnChangeRef.current = false;
-              if (next === "" && editorValue !== "") {
-                echoIgnoreMarkdownRef.current = editorValue;
-                ref.current?.setMarkdown(editorValue);
-                return;
-              }
-            }
-            // `latestValueRef` is compared against `editorValue`, so it has to
-            // hold editor space; storing `next` would make every edit containing
-            // an escaped bracket look like a pending prop sync and trigger a
-            // redundant `setMarkdown` that resets the caret.
-            latestValueRef.current = prepareMarkdownForEditor(next);
-            onChange(next);
-          }}
+          onChange={handleEditorChange}
           onBlur={() => onBlur?.()}
           onError={(payload) => {
             handleRichEditorParseError(payload.error);
