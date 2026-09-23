@@ -3,6 +3,11 @@
 > Living document for the self-hosted Paperclip deployment on `mars-grace`.
 > Covers architecture, current state, hard-won operational lessons, and the
 > Mitsui → randm consolidation plan. Last updated: 2026-09-23.
+>
+> **STATUS: MIGRATION PAUSED.** Paperclip work moved to an environment with
+> more access. The handoff with the exact resume-from point is Linear issue
+> **[OPS-503](https://linear.app/randmthot/issue/OPS-503)**
+> (randm org, assigned to Rand). Everything below remains accurate.
 
 ## 1. Deployment architecture
 
