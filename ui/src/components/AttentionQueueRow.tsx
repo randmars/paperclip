@@ -49,6 +49,7 @@ import {
 } from "./ui/dropdown-menu";
 import { AttentionInteractionResolver } from "./AttentionInteractionResolver";
 import { DecisionResolver } from "./DecisionResolver";
+import { SelfBlockResolutionActions } from "./SelfBlockResolutionActions";
 import { StalledReviewActions } from "./StalledReviewActions";
 import { readIssueReviewPolicyMetadata } from "../lib/review-policy";
 
@@ -811,6 +812,24 @@ function InlineResolver({
         companyId={companyId}
         footerSlot={toggle}
         reviewPolicy={readIssueReviewPolicyMetadata(item.subject.metadata)}
+      />
+    );
+  }
+
+  if (item.sourceKind === "blocker_attention") {
+    // Inline only for a self-block. The server sets `inlineResolvable` when the
+    // issue records no blocker edge at all, so the subject IS the issue and
+    // Unblock / Reassign clear it in-row. A blocker row with a real dependency is
+    // left non-inline and keeps deep-linking to the chain it waits on.
+    const detail = item.detail?.kind === "blocker" ? item.detail : null;
+    return (
+      <SelfBlockResolutionActions
+        issueId={item.subject.id}
+        companyId={companyId}
+        unblockAction={detail?.unblockDescriptor?.action ?? null}
+        unblockOwner={detail?.unblockDescriptor?.owner ?? null}
+        agentMap={agentMap}
+        footerSlot={toggle}
       />
     );
   }

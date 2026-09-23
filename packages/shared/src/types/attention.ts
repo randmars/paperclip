@@ -165,6 +165,20 @@ export type AttentionItemDetail =
         title: string | null;
       } | null;
       blockedTaskCount?: number;
+      /**
+       * True when the blocked issue records no blocker edge at all, so the
+       * liveness pass points its terminal blocker back at the issue itself.
+       * This is the one blocker shape an operator can clear directly, and the
+       * only one the feed marks inline-resolvable.
+       */
+      selfBlocked?: boolean;
+      /** Blocker edges the liveness pass counted for this issue. Zero on a self-block. */
+      unresolvedBlockerCount?: number;
+      /** The issue's own statement of what it is waiting for, if it recorded one. */
+      unblockDescriptor?: {
+        owner: { agentId: string } | { userId: string } | "board";
+        action: string;
+      } | null;
       images: AttentionDetailImage[];
     }
   | {

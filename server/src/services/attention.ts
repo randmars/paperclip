@@ -27,6 +27,7 @@ import {
   projectWorkspaces,
 } from "@paperclipai/db";
 import { deriveProjectUrlKey } from "@paperclipai/shared";
+import { readSelfBlockFacts } from "./self-block-facts.js";
 import type {
   AttentionDecisionVerb,
   AttentionFeed,
@@ -828,6 +829,7 @@ async function issueSummaryMap(db: Db, companyId: string, issueIds: Array<string
       reviewPolicy: issues.reviewPolicy,
       assigneeAgentId: issues.assigneeAgentId,
       assigneeUserId: issues.assigneeUserId,
+      unblockDescriptor: issues.unblockDescriptor,
       createdAt: issues.createdAt,
       updatedAt: issues.updatedAt,
       projectId: projects.id,
@@ -1539,21 +1541,28 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         const blockedTaskCount = blockedWorkCounts.get(terminalIssueId) ?? 0;
         const taskLabel = blockedTaskCount === 1 ? "task" : "tasks";
         const dedupKey = `blocker:${terminalIssueId}`;
+        const selfBlockFacts = readSelfBlockFacts(candidate.issue);
         add(createItem({
           companyId,
           sourceKind: "blocker_attention",
           subject: issueSubject(prefix, candidate.terminalSummary),
-          whyNow: candidate.state === "needs_attention"
-            ? `Blocks ${blockedTaskCount} ${taskLabel} and needs human attention.`
-            : `Blocks ${blockedTaskCount} ${taskLabel}; choose the next owner or action.`,
+          whyNow: selfBlockFacts.selfBlocked
+            ? "Blocked with no recorded blocker; choose the action or owner that resumes it."
+            : candidate.state === "needs_attention"
+              ? `Blocks ${blockedTaskCount} ${taskLabel} and needs human attention.`
+              : `Blocks ${blockedTaskCount} ${taskLabel}; choose the next owner or action.`,
           decisionVerbs: decisionVerbs(
             { id: "unblock", label: "Unblock", description: "Repair or replace the stalled blocker path." },
             { id: "reassign", label: "Reassign", description: "Assign the stalled blocker to a live owner." },
             { id: "nudge", label: "Nudge", description: "Wake or prompt the current owner." },
           ),
-          inlineResolvable: false,
-          entryRule: `terminal blocker has a non-live blockerAttention.state = '${candidate.state}'`,
-          exitRule: "The blocking tree becomes live or no open work remains blocked.",
+          inlineResolvable: selfBlockFacts.selfBlocked,
+          entryRule: selfBlockFacts.selfBlocked
+            ? "blocked with zero recorded blocker edges (terminalBlockerIssueId is the issue itself)"
+            : `terminal blocker has a non-live blockerAttention.state = '${candidate.state}'`,
+          exitRule: selfBlockFacts.selfBlocked
+            ? "The issue leaves blocked, or the operator records the real blocker."
+            : "The blocking tree becomes live or no open work remains blocked.",
           dedupKey,
           severity: "high",
           activityAt: toIso(candidate.terminalSummary.updatedAt),
@@ -1565,6 +1574,9 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
             kind: "blocker",
             blockingIssue: null,
             blockedTaskCount,
+            selfBlocked: selfBlockFacts.selfBlocked,
+            unresolvedBlockerCount: selfBlockFacts.unresolvedBlockerCount,
+            unblockDescriptor: selfBlockFacts.unblockDescriptor,
             images: issueImages(blockerImageMap, terminalIssueId),
           },
         }));

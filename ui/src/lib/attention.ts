@@ -31,6 +31,12 @@ export const INLINE_RESOLVABLE_SOURCE_KINDS: ReadonlySet<AttentionSourceKind> = 
   "issue_thread_interaction",
   "join_request",
   "review",
+  // `blocker_attention` inlines *only* for a self-block - a blocked issue with
+  // no recorded blocker edge, where the terminal blocker is the issue itself.
+  // There is no dependency to name and no tree to chase, so Unblock / Reassign
+  // actuate in-row. A blocker row with a real dependency keeps deep-linking,
+  // and the server leaves `inlineResolvable` off for it.
+  "blocker_attention",
 ]);
 
 export function isInlineResolvable(item: AttentionItem): boolean {

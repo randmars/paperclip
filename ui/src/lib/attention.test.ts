@@ -105,9 +105,17 @@ describe("isInlineResolvable", () => {
   });
 
   it("deep-links recovery/failure/budget rows rather than inlining", () => {
-    for (const kind of ["recovery_action", "failed_run", "budget_alert", "blocker_attention"] as AttentionSourceKind[]) {
+    for (const kind of ["recovery_action", "failed_run", "budget_alert"] as AttentionSourceKind[]) {
       expect(isInlineResolvable(buildItem({ sourceKind: kind, inlineResolvable: true }))).toBe(false);
     }
+  });
+
+  it("inlines a self-block the server flagged (zero blocker edges)", () => {
+    expect(isInlineResolvable(buildItem({ sourceKind: "blocker_attention", inlineResolvable: true }))).toBe(true);
+  });
+
+  it("keeps a blocker row holding a real dependency deep-linking", () => {
+    expect(isInlineResolvable(buildItem({ sourceKind: "blocker_attention", inlineResolvable: false }))).toBe(false);
   });
 });
 
