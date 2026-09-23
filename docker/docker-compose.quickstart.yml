@@ -25,6 +25,7 @@ services:
       # ── LLM provider keys (at least one is needed for agents to work) ──
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Buffy (PoC): route provider traffic to local 9-router instead of official APIs
 
       # ── Deployment settings ──
       # "authenticated" requires login, "local_trusted" skips auth
@@ -41,4 +42,4 @@ services:
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
     volumes:
       # Persistent data directory (database, agent workspaces, uploads)
-      - "${PAPERCLIP_DATA_DIR:-../data/docker-paperclip}:/paperclip"
+      - "${PAPERCLIP_DATA_DIR:-/home/randy/docker/paperclip-data}:/paperclip"

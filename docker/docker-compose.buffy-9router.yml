@@ -1,0 +1,14 @@
+# Buffy (PoC): attach Paperclip to the network that hosts 9-router.
+# The live container is on docker_default (the compose project network for
+# /home/randy/docker/*) — NOT an external network named "bridge". Using the
+# wrong network here silently breaks 9-router reachability on a recreate.
+services:
+  paperclip:
+    networks:
+      - default
+      - docker_default
+
+networks:
+  docker_default:
+    external: true
+    name: docker_default

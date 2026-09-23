@@ -1,0 +1,34 @@
+# Local integration overlay for the Paperclip Docker quickstart.
+services:
+  paperclip:
+    image: paperclip-dev-3753:shared-github-pat
+    restart: unless-stopped
+    environment:
+      # RAN-45: agent run shells resolve this PATH string on the HOST where runs execute.
+      # Include host toolchain dirs (bun, node) ahead of the container defaults.
+      PATH: "/home/randy/.local/bin:/home/randy/.bun/bin:/home/randy/.local/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      PAPERCLIP_AGENT_JWT_SECRET: "${PAPERCLIP_AGENT_JWT_SECRET:?}"
+      PAPERCLIP_TOOL_ACTION_SIGNING_SECRET: "${PAPERCLIP_TOOL_ACTION_SIGNING_SECRET:?}"
+      # Public origin GitHub reaches for webhook delivery. Served by the
+      # Tailscale Funnel path /api/chat-webhooks on port 10000. Port 443 is NOT publicly served.
+      PAPERCLIP_CHAT_WEBHOOK_PUBLIC_URL: "${PAPERCLIP_CHAT_WEBHOOK_PUBLIC_URL:-}"
+    volumes:
+      # RAN-68 (Rand-approved): read-only exposure of the host Bun toolchain
+      # to the run container, at the path already present in the run PATH.
+      - type: bind
+        source: /home/randy/.bun/bin
+        target: /home/randy/.bun/bin
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - default
+      - dify
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "n8n.apps.marsden.org:host-gateway"
+
+networks:
+  dify:
+    external: true
+    name: docker_default

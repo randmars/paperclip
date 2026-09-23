@@ -96,15 +96,13 @@ export const models = [
   { id: "gpt-6-astra", label: "gpt-6-astra" },
   { id: "gpt-5.6-terra", label: "gpt-5.6-terra" },
   { id: "gpt-5.6-luna", label: "gpt-5.6-luna" },
-  { id: "gpt-5.4", label: "gpt-5.4" },
-  { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-  { id: "gpt-5", label: "gpt-5" },
-  { id: "o3", label: "o3" },
-  { id: "o4-mini", label: "o4-mini" },
-  { id: "gpt-5-mini", label: "gpt-5-mini" },
-  { id: "gpt-5-nano", label: "gpt-5-nano" },
-  { id: "o3-mini", label: "o3-mini" },
-  { id: "codex-mini-latest", label: "Codex Mini" },
+  // This deployment's Codex CLI authenticates with a ChatGPT account, not an API key.
+  // OpenAI rejects the API-key-era slugs on ChatGPT accounts with HTTP 400
+  // ("The '<model>' model is not supported when using Codex with a ChatGPT account."),
+  // which the ACP engine classifies as a terminal provider error and kills the run.
+  // Listing them in the model picker is therefore a trap, so the catalog is limited to
+  // models verified to work on a ChatGPT account.
+  { id: "gpt-5.5", label: "gpt-5.5" },
 ];
 
 export const agentConfigurationDoc = `# codex_local agent configuration
