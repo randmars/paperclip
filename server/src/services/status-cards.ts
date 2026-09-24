@@ -699,7 +699,8 @@ export function statusCardService(
       idempotencyKey: `status-card-update:${card.id}:${fingerprintHash}`,
       onDeduplicated: (reason) => { deduplicated = reason === "idempotency_key"; },
     });
-    const reopened = deduplicated && TERMINAL_ISSUE_STATUSES.has(created.status)
+    const revivedTerminal = deduplicated && TERMINAL_ISSUE_STATUSES.has(created.status);
+    const reopened = revivedTerminal
       ? await issuesSvc.update(created.id, { status: "todo", assigneeAgentId: summarizerAgentId })
       : created;
     const generationIssue = await issuesSvc.update(reopened!.id, {
@@ -731,7 +732,7 @@ export function statusCardService(
       const winnerIssue = await db.select().from(issues).where(eq(issues.id, winner.generatingIssueId)).then((rows) => rows[0] ?? null);
       return { card: winner, generatingIssue: winnerIssue, alreadyGenerating: true, enqueued: false, kind, changes };
     }
-    if (!deduplicated || TERMINAL_ISSUE_STATUSES.has(created.status)) {
+    if (!deduplicated || revivedTerminal) {
       await db.insert(statusCardUpdates).values({
         cardId: card.id,
         kind,
@@ -742,7 +743,7 @@ export function statusCardService(
         status: "running",
       });
     }
-    return { card: next, generatingIssue: generationIssue!, alreadyGenerating: deduplicated, enqueued: true, kind, changes };
+    return { card: next, generatingIssue: generationIssue!, alreadyGenerating: deduplicated && !revivedTerminal, enqueued: true, kind, changes };
   }
 
   async function tickDueStatusCards(now = new Date()) {
