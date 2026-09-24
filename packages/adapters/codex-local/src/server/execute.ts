@@ -110,6 +110,10 @@ import {
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const executeCodexAcp = createCodexAcpExecutor();
+// Linux rejects any individual argv or environment string at 128 KiB before
+// the child exists (E2BIG). Keep generous headroom for encoding and platform
+// differences. The complete wake is already delivered through Codex stdin.
+const MAX_INLINE_PAPERCLIP_WAKE_PAYLOAD_BYTES = 64 * 1024;
 const CODEX_ROLLOUT_NOISE_RE =
   /^\d{4}-\d{2}-\d{2}T[^\s]+\s+ERROR\s+codex_core::rollout::list:\s+state db missing rollout path for thread\s+[a-z0-9-]+$/i;
 
@@ -938,8 +942,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (linkedIssueIds.length > 0) {
       env.PAPERCLIP_LINKED_ISSUE_IDS = linkedIssueIds.join(",");
     }
-    if (wakePayloadJson) {
+    const wakePayloadBytes = wakePayloadJson
+      ? Buffer.byteLength(wakePayloadJson, "utf8")
+      : 0;
+    if (
+      wakePayloadJson &&
+      wakePayloadBytes <= MAX_INLINE_PAPERCLIP_WAKE_PAYLOAD_BYTES
+    ) {
       env.PAPERCLIP_WAKE_PAYLOAD_JSON = wakePayloadJson;
+    } else if (wakePayloadJson) {
+      await onLog(
+        "stdout",
+        `[paperclip] Wake payload env copy omitted (${wakePayloadBytes} bytes); full wake remains available in the stdin prompt.\n`,
+      );
     }
     refreshPaperclipWorkspaceEnvForExecution({
       env,
