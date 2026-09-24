@@ -1996,7 +1996,7 @@ describeEmbeddedPostgres("attention service", () => {
     });
   });
 
-  it("serves the route for board users and rejects agent callers", async () => {
+  it("serves the route for board users and same-company agents with acting-user context", async () => {
     const { companyId } = await seedCompany("ATR");
 
     function app(actor: Record<string, unknown>) {
@@ -2025,6 +2025,7 @@ describeEmbeddedPostgres("attention service", () => {
       agentId: randomUUID(),
       runId: null,
     };
+    const agentWithActingUser = { ...agent, onBehalfOfUserId: "board-user" };
 
     await request(app(board)).get(`/api/companies/${companyId}/attention`).expect(200);
     const completeFeed = await request(app(board))
@@ -2037,6 +2038,12 @@ describeEmbeddedPostgres("attention service", () => {
     await request(app(board))
       .get(`/api/companies/${companyId}/attention?sort=oldest`)
       .expect(400, { error: "sort must be 'activity' or 'decide'" });
+    const agentFeed = await request(app(agentWithActingUser))
+      .get(
+        `/api/companies/${companyId}/attention?all=true&includeDismissed=false&archived=false&sort=activity&limit=100`,
+      )
+      .expect(200);
+    expect(agentFeed.body).toEqual({ items: [], nextCursor: null });
     await request(app(agent)).get(`/api/companies/${companyId}/attention`).expect(403);
   });
 
