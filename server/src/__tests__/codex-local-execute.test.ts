@@ -648,6 +648,98 @@ describe("codex execute", () => {
     }
   });
 
+  it("launches with an oversized wake by keeping history on stdin instead of in the environment", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-oversized-wake-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "codex");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeCodexCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+    await seedSharedCodexAuth(root);
+
+    const historySentinel = "oversized-history-still-retrievable";
+    const secretSentinel = "must-not-appear-in-adapter-logs";
+    const oversizedBody = `${"x".repeat(147_298)}${historySentinel}${secretSentinel}`;
+    const logs: LogEntry[] = [];
+
+    try {
+      const result = await execute({
+        runId: "run-oversized-wake",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Codex Coder",
+          adapterType: "codex_local",
+          adapterConfig: { engine: "cli" },
+        },
+        runtime: {
+          sessionId: null,
+          sessionParams: null,
+          sessionDisplayId: null,
+          taskKey: null,
+        },
+        config: {
+          engine: "cli",
+          command: commandPath,
+          cwd: workspace,
+          env: {
+            PAPERCLIP_TEST_CAPTURE_PATH: capturePath,
+          },
+          promptTemplate: "Follow the paperclip heartbeat.",
+        },
+        context: {
+          issueId: "issue-oversized",
+          taskId: "issue-oversized",
+          wakeReason: "issue_assigned",
+          paperclipWake: {
+            reason: "issue_assigned",
+            issue: {
+              id: "issue-oversized",
+              identifier: "RAN-206",
+              title: "Oversized continuation fixture",
+              description: oversizedBody,
+              status: "in_progress",
+              priority: "high",
+            },
+            commentIds: [],
+            latestCommentId: null,
+            comments: [],
+            commentWindow: {
+              requestedCount: 0,
+              includedCount: 0,
+              missingCount: 0,
+            },
+            truncated: false,
+            fallbackFetchNeeded: false,
+          },
+        },
+        authToken: "run-jwt-token",
+        onLog: async (stream, chunk) => {
+          logs.push({ stream, chunk });
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeNull();
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.paperclipEnvKeys).not.toContain("PAPERCLIP_WAKE_PAYLOAD_JSON");
+      expect(capture.paperclipWakePayloadJson).toBeNull();
+      expect(capture.prompt).toContain(historySentinel);
+      expect(logs.map((entry) => entry.chunk).join("\n")).toContain(
+        "Wake payload env copy omitted",
+      );
+      expect(logs.map((entry) => entry.chunk).join("\n")).not.toContain(secretSentinel);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies remote-compaction high-demand failures as retryable transient upstream errors", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-codex-execute-transient-"));
     const workspace = path.join(root, "workspace");
