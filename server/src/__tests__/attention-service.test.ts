@@ -1866,12 +1866,14 @@ describeEmbeddedPostgres("attention service", () => {
 
     await expect(attentionService(db).list(companyId, { userId: "board-user", all: true }))
       .rejects.toThrow("all requires a queue filter");
-    await expect(attentionService(db).list(companyId, {
+    const completeSnapshotWithLimit = await attentionService(db).list(companyId, {
       userId: "board-user",
       queue: "bulk-review",
       all: true,
       limit: 25,
-    })).rejects.toThrow("all cannot be combined with cursor or limit");
+    });
+    expect(completeSnapshotWithLimit.items).toHaveLength(101);
+    expect(completeSnapshotWithLimit.nextCursor).toBeNull();
   });
 
   it("does not apply the open-decision safety limit to complete snapshots", async () => {
@@ -2025,7 +2027,11 @@ describeEmbeddedPostgres("attention service", () => {
       agentId: randomUUID(),
       runId: null,
     };
-    const agentWithActingUser = { ...agent, onBehalfOfUserId: "board-user" };
+    const agentWithActingUser = {
+      ...agent,
+      onBehalfOfUserId: "board-user",
+      onBehalfOfMemberships: [{ companyId, status: "active" }],
+    };
 
     await request(app(board)).get(`/api/companies/${companyId}/attention`).expect(200);
     const completeFeed = await request(app(board))

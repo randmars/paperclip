@@ -1901,8 +1901,8 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
       let items: AttentionItem[];
       let nextCursor: string | null;
       if (options.all) {
-        if (options.cursor || options.limit !== undefined) {
-          throw badRequest("all cannot be combined with cursor or limit");
+        if (options.cursor) {
+          throw badRequest("all cannot be combined with cursor");
         }
         items = rankedItems;
         nextCursor = null;
