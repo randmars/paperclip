@@ -32,14 +32,14 @@ const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : 
 
 type Db = ReturnType<typeof createDb>;
 
-async function createApp(db: Db, companyId: string, userId: string) {
+async function createApp(db: Db, companyId: string, userId: string, actor?: Express.Request["actor"]) {
   process.env.PAPERCLIP_LOG_DIR = "/tmp/paperclip-test-home/logs";
   process.env.PAPERCLIP_IN_WORKTREE = "false";
   const { accessRoutes } = await import("../routes/access.js");
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.actor = {
+    req.actor = actor ?? {
       type: "board",
       userId,
       source: "local_implicit",
@@ -113,6 +113,62 @@ describeEmbeddedPostgres("access routes permissions upgrade compatibility", () =
 
   afterAll(async () => {
     await tempDb?.cleanup();
+  });
+
+  async function agentMember(companyId: string) {
+    return db.insert(companyMemberships).values({
+      companyId, principalType: "agent", principalId: randomUUID(),
+      status: "active", membershipRole: "member",
+    }).returning().then((rows) => rows[0]!);
+  }
+
+  it("lets an authorized board read and update agent grants without losing merged grants", async () => {
+    const { company, owner } = await createCompanyWithOwner(db);
+    const member = await agentMember(company.id);
+    await db.insert(principalPermissionGrants).values({
+      companyId: company.id, principalType: "agent", principalId: member.principalId,
+      permissionKey: "tasks:assign", scope: null,
+    });
+    const app = await createApp(db, company.id, owner.principalId);
+    const url = `/api/companies/${company.id}/members/${member.id}/permissions`;
+    const before = await request(app).get(url);
+    expect(before.status).toBe(200);
+    expect(before.body.principalType).toBe("agent");
+    const grants = before.body.grants.map((grant: any) => ({ permissionKey: grant.permissionKey, scope: grant.scope }));
+    const updated = await request(app).patch(url).send({ grants: [...grants, { permissionKey: "agents:suggest-changes", scope: null }] });
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    expect(updated.body.grants.map((grant: any) => grant.permissionKey).sort()).toEqual(["agents:suggest-changes", "tasks:assign"]);
+    expect((await request(app).get(url)).body.grants).toHaveLength(2);
+    expect(await db.select().from(activityLog)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "company_member.permissions_updated", entityId: member.id }),
+    ]));
+  });
+
+  it("denies agent callers even with the management permission", async () => {
+    const { company } = await createCompanyWithOwner(db);
+    const member = await agentMember(company.id);
+    await db.insert(principalPermissionGrants).values({ companyId: company.id, principalType: "agent", principalId: member.principalId, permissionKey: "users:manage_permissions" });
+    const app = await createApp(db, company.id, "unused", { type: "agent", agentId: member.principalId, companyId: company.id } as Express.Request["actor"]);
+    const url = `/api/companies/${company.id}/members/${member.id}/permissions`;
+    expect((await request(app).get(url)).status).toBe(403);
+    expect((await request(app).patch(url).send({ grants: [] })).status).toBe(403);
+    expect(await db.select().from(principalPermissionGrants)).toHaveLength(1);
+  });
+
+  it("denies an unprivileged board and other-company or inactive targets without writes", async () => {
+    const { company, owner } = await createCompanyWithOwner(db);
+    const member = await agentMember(company.id);
+    const denied = await createApp(db, company.id, "outsider", { type: "board", userId: "outsider", source: "session", companyIds: [company.id] } as Express.Request["actor"]);
+    const url = `/api/companies/${company.id}/members/${member.id}/permissions`;
+    expect((await request(denied).get(url)).status).toBe(403);
+    expect((await request(denied).patch(url).send({ grants: [] })).status).toBe(403);
+    const app = await createApp(db, company.id, owner.principalId);
+    const other = await createCompanyWithOwner(db);
+    const foreign = await agentMember(other.company.id);
+    expect((await request(app).patch(`/api/companies/${company.id}/members/${foreign.id}/permissions`).send({ grants: [] })).status).toBe(404);
+    await db.update(companyMemberships).set({ status: "suspended" }).where(eq(companyMemberships.id, member.id));
+    expect((await request(app).patch(url).send({ grants: [] })).status).toBe(403);
+    expect(await db.select().from(activityLog)).toHaveLength(0);
   });
 
   it("rejects owner self-lockout through the member route after the permissions upgrade", async () => {

@@ -4616,16 +4616,46 @@ export function accessRoutes(
     }
   );
 
+  // Permission preflight includes agent memberships without changing the human
+  // Members UI or exposing board administration to agent callers.
+  async function loadPermissionMember(companyId: string, memberId: string) {
+    const member = await access.getMemberById(companyId, memberId);
+    if (!member) throw notFound("Member not found");
+    if (member.principalType === "user") {
+      const human = (await loadCompanyMemberRecords(db, companyId)).find((entry) => entry.id === memberId);
+      if (!human) throw notFound("Member not found");
+      return human;
+    }
+    const grants = await db.select().from(principalPermissionGrants).where(and(
+      eq(principalPermissionGrants.companyId, companyId),
+      eq(principalPermissionGrants.principalType, member.principalType),
+      eq(principalPermissionGrants.principalId, member.principalId),
+    ));
+    return { ...member, user: null, grants };
+  }
+
+  router.get("/companies/:companyId/members/:memberId/permissions", async (req, res) => {
+    if (req.actor.type !== "board") throw forbidden("Board access required");
+    const companyId = req.params.companyId as string;
+    await assertCompanyPermission(req, companyId, "users:manage_permissions");
+    res.json(await loadPermissionMember(companyId, req.params.memberId as string));
+  });
+
   router.patch(
     "/companies/:companyId/members/:memberId/permissions",
     validate(updateMemberPermissionsSchema),
     async (req, res) => {
+      if (req.actor.type !== "board") throw forbidden("Board access required");
       const companyId = req.params.companyId as string;
       const memberId = req.params.memberId as string;
       await assertCompanyPermission(req, companyId, "users:manage_permissions");
       const memberToUpdate = await access.getMemberById(companyId, memberId);
       if (!memberToUpdate) throw notFound("Member not found");
-      await assertCanManageCompanyMember(req, access, companyId, memberToUpdate);
+      if (memberToUpdate.principalType === "agent") {
+        if (memberToUpdate.status !== "active") throw forbidden("Agent membership must be active");
+      } else {
+        await assertCanManageCompanyMember(req, access, companyId, memberToUpdate);
+      }
       const updated = await access.setMemberPermissions(
         companyId,
         memberId,
@@ -4644,11 +4674,7 @@ export function accessRoutes(
           grantCount: req.body.grants?.length ?? 0,
         },
       });
-      const member = (await loadCompanyMemberRecords(db, companyId)).find(
-        (entry) => entry.id === memberId,
-      );
-      if (!member) throw notFound("Member not found");
-      res.json(member);
+      res.json(await loadPermissionMember(companyId, memberId));
     }
   );
 
