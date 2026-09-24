@@ -6426,6 +6426,22 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/companies/{companyId}/members/{memberId}/permissions",
+  tags: ["access"],
+  summary: "Get explicit company member permissions",
+  request: {
+    params: z.object({ companyId: z.string(), memberId: z.string() }),
+  },
+  responses: {
+    200: r.ok(),
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/companies/{companyId}/user-directory",
   tags: ["access"],
   summary: "Get company user directory",
