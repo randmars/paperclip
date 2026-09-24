@@ -650,6 +650,42 @@ describeEmbeddedPostgres("status card routes", () => {
       error: expect.stringContaining("cancelled"),
     });
   });
+
+  it("requeues a terminal deduplicated refresh task", async () => {
+    const company = await seedCompany();
+    await enableStatusCards();
+    await seedSummarizer(company.id);
+    const service = statusCardService(db);
+    const card = await service.create(
+      company.id,
+      {
+        interestPrompt: "Recently updated launch tasks",
+        titlePinned: false,
+        refreshPolicy: { mode: "manual" },
+      },
+      { agentId: null, userId: "board-user" },
+    );
+    await db.update(statusCards).set({
+      state: "active",
+      queries: [{ scope: "issues", status: ["blocked"], updatedWithin: "7d", sort: "updated", limit: 20, offset: 0 }] as typeof card.queries,
+      fingerprint: {},
+      fingerprintAt: new Date(),
+    }).where(eq(statusCards.id, card.id));
+
+    const first = await service.requestRefresh(card.id, { actor: { agentId: null, userId: "board-user" } });
+    expect(first.enqueued).toBe(true);
+    await issueService(db).update(first.generatingIssue!.id, { status: "done" });
+
+    const retry = await service.requestRefresh(card.id, { actor: { agentId: null, userId: "board-user" } });
+    expect(retry).toMatchObject({
+      enqueued: true,
+      alreadyGenerating: false,
+      generatingIssue: { id: first.generatingIssue!.id, status: "todo" },
+    });
+    expect(await db.select().from(issues)).toHaveLength(1);
+    expect(await db.select().from(statusCardUpdates).where(eq(statusCardUpdates.cardId, card.id))).toHaveLength(2);
+  });
+
   it("prevents agents from managing cards authored by the board", async () => {
     const company = await seedCompany();
     await enableStatusCards();
