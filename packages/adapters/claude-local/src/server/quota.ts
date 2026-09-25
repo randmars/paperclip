@@ -86,7 +86,10 @@ function trimToLatestUsagePanel(text: string): string | null {
   return tail;
 }
 
-async function readClaudeTokenFromFile(credPath: string): Promise<string | null> {
+async function readClaudeCredentialFromFile(
+  credPath: string,
+  allowExpiredWithRefresh: boolean,
+): Promise<string | null> {
   let raw: string;
   try {
     raw = await fs.readFile(credPath, "utf8");
@@ -98,17 +101,27 @@ async function readClaudeTokenFromFile(credPath: string): Promise<string | null>
   // On macOS the CLI refreshes the Keychain item, not this file, so a file
   // whose token has expired is a stale leftover. Skip it so the caller can
   // fall through to a live credential instead of failing with a dead token.
-  if (credential.expiresAt != null && credential.expiresAt <= Date.now()) return null;
-  return credential.token;
+  if (
+    credential.expiresAt != null &&
+    credential.expiresAt <= Date.now() &&
+    (!allowExpiredWithRefresh || !credential.refreshToken)
+  ) return null;
+  return raw;
 }
 
-interface ClaudeCredential {
+async function readClaudeTokenFromFile(credPath: string): Promise<string | null> {
+  const raw = await readClaudeCredentialFromFile(credPath, false);
+  return raw ? parseClaudeCredential(raw)?.token ?? null : null;
+}
+
+export interface ClaudeCredential {
   token: string;
+  refreshToken: string | null;
   /** Epoch milliseconds, when the credential file records one. */
   expiresAt: number | null;
 }
 
-function parseClaudeCredential(raw: string): ClaudeCredential | null {
+export function parseClaudeCredential(raw: string): ClaudeCredential | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -121,8 +134,13 @@ function parseClaudeCredential(raw: string): ClaudeCredential | null {
   if (typeof oauth !== "object" || oauth === null) return null;
   const token = (oauth as Record<string, unknown>)["accessToken"];
   if (typeof token !== "string" || token.length === 0) return null;
+  const refreshToken = (oauth as Record<string, unknown>)["refreshToken"];
   const expiresAt = (oauth as Record<string, unknown>)["expiresAt"];
-  return { token, expiresAt: typeof expiresAt === "number" && Number.isFinite(expiresAt) ? expiresAt : null };
+  return {
+    token,
+    refreshToken: typeof refreshToken === "string" && refreshToken.length > 0 ? refreshToken : null,
+    expiresAt: typeof expiresAt === "number" && Number.isFinite(expiresAt) ? expiresAt : null,
+  };
 }
 
 function parseClaudeCredentialToken(raw: string): string | null {
@@ -170,11 +188,19 @@ function isolatedKeychainService(configDir: string): string {
   return `Claude Code-credentials-${createHash("sha256").update(configDir).digest("hex").slice(0, 8)}`;
 }
 
-async function readClaudeTokenFromKeychain(service: string): Promise<string | null> {
+async function readClaudeCredentialFromKeychain(service: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("/usr/bin/security", ["find-generic-password", "-s", service, "-w"], { timeout: 10000, maxBuffer: 1024 * 1024 });
-    return parseClaudeCredentialToken(stdout);
+    const credential = parseClaudeCredential(stdout);
+    if (!credential) return null;
+    if (credential.expiresAt != null && credential.expiresAt <= Date.now() && !credential.refreshToken) return null;
+    return stdout;
   } catch { return null; }
+}
+
+async function readClaudeTokenFromKeychain(service: string): Promise<string | null> {
+  const raw = await readClaudeCredentialFromKeychain(service);
+  return raw ? parseClaudeCredentialToken(raw) : null;
 }
 
 /**
@@ -186,6 +212,31 @@ async function readClaudeTokenFromKeychain(service: string): Promise<string | nu
 export async function readIsolatedClaudeKeychainToken(loginHome: string): Promise<string | null> {
   if (process.platform !== "darwin") return null;
   return readClaudeTokenFromKeychain(isolatedKeychainService(loginHome));
+}
+
+/**
+ * Read the full credential document for an isolated login. An expired access
+ * token is accepted only when Claude also supplied a refresh token; Claude
+ * Code can then refresh it inside the managed home on the next run.
+ */
+export async function readIsolatedClaudeCredential(loginHome: string): Promise<string | null> {
+  if (process.platform !== "darwin") return null;
+  return readClaudeCredentialFromKeychain(isolatedKeychainService(loginHome));
+}
+
+/** Read the full Claude credential document, preserving refresh state. */
+export async function readClaudeCredential(options: { allowKeychain?: boolean } = {}): Promise<string | null> {
+  const configDir = claudeConfigDir();
+  for (const filename of [".credentials.json", "credentials.json"]) {
+    const raw = await readClaudeCredentialFromFile(path.join(configDir, filename), true);
+    if (raw) return raw;
+  }
+  if (process.platform !== "darwin") return null;
+  if (process.env.CLAUDE_CONFIG_DIR?.trim()) {
+    return readClaudeCredentialFromKeychain(isolatedKeychainService(configDir));
+  }
+  if (options.allowKeychain) return readClaudeCredentialFromKeychain("Claude Code-credentials");
+  return null;
 }
 
 export async function readClaudeToken(options: { allowKeychain?: boolean } = {}): Promise<string | null> {

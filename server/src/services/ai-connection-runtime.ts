@@ -15,6 +15,10 @@ import { decideCodexAuthMerge } from "@paperclipai/adapter-codex-local/server";
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/execution-target";
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
+import {
+  parseClaudeCredential,
+  readIsolatedClaudeCredential,
+} from "@paperclipai/adapter-claude-local/server";
 
 export function isAiConnectionBusy(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 422 &&
@@ -234,9 +238,6 @@ export async function prepareManagedAiRuntime(
     runnerProvider: input.config.provider,
     acpxAgent: input.config.acpxAgent,
   });
-  const subscriptionFile =
-    selection.attribution.method === "subscription" &&
-    input.binding.provider !== "anthropic";
   let home: string | undefined;
   try {
     const selectedGrantId = selection.grant.id;
@@ -270,13 +271,23 @@ export async function prepareManagedAiRuntime(
         selection.attribution.method
       ]!;
     const authFile = path.join(providerHome, "auth.json");
+    const claudeCredentialFile =
+      input.binding.provider === "anthropic" &&
+      selection.attribution.method === "subscription" &&
+      parseClaudeCredential(value)
+        ? path.join(providerHome, ".credentials.json")
+        : null;
+    const subscriptionFile =
+      selection.attribution.method === "subscription" &&
+      (input.binding.provider !== "anthropic" || claudeCredentialFile !== null);
+    const subscriptionCredentialFile = claudeCredentialFile ?? authFile;
     if (input.binding.provider === "openai")
       await writeFile(
         path.join(providerHome, "config.toml"),
         'cli_auth_credentials_store = "file"\n',
         { mode: 0o600 },
       );
-    if (subscriptionFile) await writeFile(authFile, value, { mode: 0o600 });
+    if (subscriptionFile) await writeFile(subscriptionCredentialFile, value, { mode: 0o600 });
     else env[capability.envKey] = value;
     if (
       input.binding.provider === "openai" &&
@@ -312,7 +323,16 @@ export async function prepareManagedAiRuntime(
       cleanup: async () => {
         try {
           if (subscriptionFile) {
-            const refreshed = await readFile(authFile, "utf8");
+            let refreshed = await readFile(subscriptionCredentialFile, "utf8");
+            // On macOS Claude Code may refresh a custom config directory's
+            // Keychain item instead of rewriting the file. Read only this
+            // managed home's suffixed item; never consult ambient auth.
+            if (
+              input.binding.provider === "anthropic" &&
+              refreshed === value
+            ) {
+              refreshed = (await readIsolatedClaudeCredential(providerHome)) ?? refreshed;
+            }
             if (refreshed !== value)
               await db.transaction(async (tx) => {
                 const [grant] = await tx
@@ -351,20 +371,27 @@ export async function prepareManagedAiRuntime(
                 const current = await aiConnectionService(
                   tx as unknown as Db,
                 ).credential({ ...selection, grant });
-                const destination = path.join(
-                  providerHome,
-                  "current-auth.json",
-                );
-                await writeFile(destination, current, { mode: 0o600 });
-                const decision =
-                  input.binding.provider === "openai"
-                    ? await decideCodexAuthMerge(authFile, destination, {
-                        errorLabel: "AI account refresh",
-                      })
-                    : await decideGrokAuthMerge(authFile, destination, {
-                        errorLabel: "AI account refresh",
-                      });
-                if (decision !== 10) return;
+                if (input.binding.provider === "anthropic") {
+                  // The managed home is isolated to this selected grant. Only
+                  // accept a refresh that remains a valid Claude credential
+                  // document, never a token or arbitrary file replacement.
+                  if (!parseClaudeCredential(current) || !parseClaudeCredential(refreshed)) return;
+                } else {
+                  const destination = path.join(
+                    providerHome,
+                    "current-auth.json",
+                  );
+                  await writeFile(destination, current, { mode: 0o600 });
+                  const decision =
+                    input.binding.provider === "openai"
+                      ? await decideCodexAuthMerge(subscriptionCredentialFile, destination, {
+                          errorLabel: "AI account refresh",
+                        })
+                      : await decideGrokAuthMerge(subscriptionCredentialFile, destination, {
+                          errorLabel: "AI account refresh",
+                        });
+                  if (decision !== 10) return;
+                }
                 await secretService(tx).rotate(
                   ref.secretId,
                   { value: refreshed },

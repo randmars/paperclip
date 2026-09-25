@@ -295,6 +295,27 @@ describe("managed AI connections", () => {
       await Promise.all([first.cleanup(), second.cleanup()]);
     }
   });
+  it("keeps Claude OAuth refresh state in the isolated home and writes rotations to the same owner grant", async () => {
+    const userId = "claude-durable-credential-user";
+    await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });
+    const credential = JSON.stringify({ claudeAiOauth: { accessToken: "expired-access", refreshToken: "durable-refresh", expiresAt: Date.now() - 60_000 } });
+    const saved = await service.save(companyId, userId, { provider: "anthropic", method: "subscription", ownership: "personal", name: "Durable Claude", loginSessionId: "fixture", allAgents: true, agentIds: [] }, credential);
+    const runInput = { ...input, responsibleUserId: userId, binding: { provider: "anthropic", method: "subscription", mode: "responsible_user" } as const, config: { model: "same-model" } };
+    const run = await prepareManagedAiRuntime(db, runInput);
+    try {
+      const env = run.config.env as Record<string, string>;
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+      expect(await readFile(path.join(String(env.CLAUDE_CONFIG_DIR), ".credentials.json"), "utf8")).toBe(credential);
+      const refreshed = JSON.stringify({ claudeAiOauth: { accessToken: "refreshed-access", refreshToken: "rotated-refresh", expiresAt: Date.now() + 60 * 60_000 } });
+      await writeFile(path.join(String(env.CLAUDE_CONFIG_DIR), ".credentials.json"), refreshed);
+      await run.cleanup();
+      expect(await service.credential(await service.select({ ...runInput, userId }))).toBe(refreshed);
+      expect((await service.list(companyId, "other-claude-owner")).some(account => account.grantId === saved.grantId)).toBe(false);
+    } catch (error) {
+      await run.cleanup();
+      throw error;
+    }
+  });
   it("runs a same-agent OpenAI subscription child alongside a still-open parent", async () => {
     const userId = "subscription-contention-user";
     await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });

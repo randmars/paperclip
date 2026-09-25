@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readClaudeToken, readIsolatedClaudeKeychainToken } from "./quota.js";
+import { readClaudeCredential, readClaudeToken, readIsolatedClaudeKeychainToken } from "./quota.js";
 
 const suffixedService = (dir: string) => `Claude Code-credentials-${createHash("sha256").update(dir).digest("hex").slice(0, 8)}`;
 const mocks = vi.hoisted(() => ({ read: vi.fn(), exec: vi.fn() }));
@@ -60,6 +60,12 @@ describe("explicit Claude Keychain import", () => {
     mocks.exec.mockResolvedValue({ stdout: JSON.stringify({ claudeAiOauth: { accessToken: "fresh", expiresAt: Date.now() + 60_000 } }) });
     await expect(readClaudeToken({ allowKeychain: true })).resolves.toBe("fresh");
     expect(mocks.exec).toHaveBeenCalledTimes(1);
+  });
+  it("preserves an expired access token when the credential file has a refresh token", async () => {
+    const credential = JSON.stringify({ claudeAiOauth: { accessToken: "stale", refreshToken: "durable", expiresAt: Date.now() - 60_000 } });
+    mocks.read.mockResolvedValue(credential);
+    await expect(readClaudeCredential()).resolves.toBe(credential);
+    await expect(readClaudeToken()).resolves.toBeNull();
   });
   it("returns null for an expired credentials file without Keychain access", async () => {
     mocks.read.mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: "stale", expiresAt: Date.now() - 60_000 } }));
